@@ -117,6 +117,7 @@ npm run seed:demo -w server     # sign in as demo@pingwell.dev / pingwell-demo, 
 | `ALLOW_REGISTRATION` | `true` | Set `false` to close sign-ups once your team is in |
 | `MIN_INTERVAL_SECONDS` | `30` | Shortest check interval users can choose |
 | `CHECK_CONCURRENCY` | `25` | Concurrent checks per worker process |
+| `RUN_WORKER` | `false` | Run the worker inside the API process, so a single service does everything (small deployments) |
 | `SCHEDULER_INTERVAL_MS` | `5000` | How often each worker looks for due monitors |
 | `RESULT_RETENTION_DAYS` | `90` | How long check results are kept |
 | `MAX_MONITORS_PER_USER` | `50` | Per-account limit |

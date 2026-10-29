@@ -30,6 +30,8 @@ const schema = z.object({
   RESULT_RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   MAX_MONITORS_PER_USER: z.coerce.number().int().min(1).default(50),
   WORKER_METRICS_PORT: z.coerce.number().int().positive().default(9465),
+  /** Run the check worker inside the API process (one service instead of two). */
+  RUN_WORKER: bool,
   /** If set, GET /metrics requires `Authorization: Bearer <token>`. */
   METRICS_TOKEN: z.string().optional(),
   RATE_LIMIT: z
