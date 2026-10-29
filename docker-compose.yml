@@ -1,0 +1,93 @@
+# Production-style stack:  cp .env.example .env  (set JWT_SECRET)  then  docker compose up -d --build
+# Dashboard: http://localhost:8080   ·   Scale checks:  docker compose up -d --scale worker=3
+
+x-server: &server
+  build: { context: ., dockerfile: server/Dockerfile }
+  image: pingwell-server
+  restart: unless-stopped
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgres://pingwell:${POSTGRES_PASSWORD:-pingwell}@postgres:5432/pingwell
+    REDIS_URL: redis://redis:6379
+    JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (openssl rand -hex 32)}
+    PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
+    CORS_ORIGIN: ${PUBLIC_APP_URL:-http://localhost:8080}
+    COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+    ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+    SMTP_URL: ${SMTP_URL:-}
+    MAIL_FROM: ${MAIL_FROM:-Pingwell <alerts@pingwell.local>}
+    HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+    METRICS_TOKEN: ${METRICS_TOKEN:-}
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pingwell
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pingwell}
+      POSTGRES_DB: pingwell
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pingwell"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    <<: *server
+    restart: "no"
+    command: ["node", "server/dist/db/migrate.js"]
+    healthcheck: { disable: true }
+
+  api:
+    <<: *server
+    command: ["node", "server/dist/api/main.js"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    <<: *server
+    command: ["node", "server/dist/worker/main.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://pingwell:${POSTGRES_PASSWORD:-pingwell}@postgres:5432/pingwell
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-Pingwell <alerts@pingwell.local>}
+      HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+      CHECK_CONCURRENCY: ${CHECK_CONCURRENCY:-25}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9465/health || exit 1"]
+      interval: 15s
+    stop_grace_period: 35s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    build: { context: ., dockerfile: web/Dockerfile }
+    restart: unless-stopped
+    ports: ["${WEB_PORT:-8080}:8080"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  redisdata:

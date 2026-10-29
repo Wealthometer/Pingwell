@@ -1,0 +1,22 @@
+{
+  "name": "pingwell",
+  "private": true,
+  "description": "Self-hosted uptime monitoring and incident management.",
+  "license": "MIT",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "npm run dev:api -w server",
+    "dev:worker": "npm run dev:worker -w server",
+    "dev:web": "npm run dev -w web",
+    "migrate": "npm run migrate -w server",
+    "build": "npm run build -w server && npm run build -w web",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "test": "npm test -w server"
+  }
+}
