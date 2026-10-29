@@ -20,9 +20,9 @@ services:
       - key: REDIS_URL
         sync: false # Upstash TCP URL: rediss://default:<password>@<name>.upstash.io:6379
       - key: PUBLIC_APP_URL
-        sync: false # your Vercel URL, e.g. https://pingwell.vercel.app
+        value: https://pingwell-three.vercel.app
       - key: CORS_ORIGIN
-        sync: false # same as PUBLIC_APP_URL
+        value: https://pingwell-three.vercel.app
       - key: SMTP_URL
         sync: false # optional; leave empty to log emails instead
       # Vercel overwrites X-Forwarded-For with the real client IP, so rate limiting sees users, not Vercel.

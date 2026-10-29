@@ -1,2 +1,0 @@
-idyVCAu9rnjdGX3m
-redis-cli --tls -u redis://default:gQAAAAAAA7J4AAIgcDE4NDM3ZjMxMzhjMWU0ODcyYmRlNzYxNGNkNDhmMmFlYg@pretty-shepherd-242296.upstash.io:6379
