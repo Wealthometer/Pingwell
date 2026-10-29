@@ -1,0 +1,64 @@
+# Render Blueprint: API + worker. The dashboard is deployed separately on Vercel (web/vercel.json).
+# Render dashboard > New > Blueprint > pick this repo. You'll be asked for every `sync: false` value.
+
+services:
+  - type: web
+    name: pingwell-api
+    runtime: docker
+    region: frankfurt # closest Render region to Supabase eu-west-1 (Ireland)
+    plan: starter # free instances sleep, which would stall the dashboard
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    dockerCommand: node server/dist/api/main.js
+    # Runs before each deploy goes live; the advisory lock keeps it safe if two overlap.
+    preDeployCommand: node server/dist/db/migrate.js
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: pingwell-shared
+      - key: DATABASE_URL
+        sync: false # Supabase Session pooler URL (port 5432), not the direct db.<ref> host
+      - key: REDIS_URL
+        sync: false # Upstash TCP URL: rediss://default:<password>@<name>.upstash.io:6379
+      - key: PUBLIC_APP_URL
+        sync: false # your Vercel URL, e.g. https://pingwell.vercel.app
+      - key: CORS_ORIGIN
+        sync: false # same as PUBLIC_APP_URL
+      - key: SMTP_URL
+        sync: false # optional; leave empty to log emails instead
+      # Vercel overwrites X-Forwarded-For with the real client IP, so rate limiting sees users, not Vercel.
+      - key: TRUST_PROXY
+        value: "true"
+
+  - type: worker
+    name: pingwell-worker
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    dockerCommand: node server/dist/worker/main.js
+    envVars:
+      - fromGroup: pingwell-shared
+      # Copied from the API so secrets are only entered once.
+      - key: DATABASE_URL
+        fromService: { type: web, name: pingwell-api, envVarKey: DATABASE_URL }
+      - key: REDIS_URL
+        fromService: { type: web, name: pingwell-api, envVarKey: REDIS_URL }
+      - key: PUBLIC_APP_URL
+        fromService: { type: web, name: pingwell-api, envVarKey: PUBLIC_APP_URL }
+      - key: SMTP_URL
+        fromService: { type: web, name: pingwell-api, envVarKey: SMTP_URL }
+
+envVarGroups:
+  - name: pingwell-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: ALLOW_PRIVATE_TARGETS
+        value: "false"
+      - key: ALLOW_REGISTRATION
+        value: "true" # set to false once you've created your account

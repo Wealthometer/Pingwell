@@ -7,8 +7,10 @@ x-server: &server
   restart: unless-stopped
   environment:
     NODE_ENV: production
-    DATABASE_URL: postgres://pingwell:${POSTGRES_PASSWORD:-pingwell}@postgres:5432/pingwell
-    REDIS_URL: redis://redis:6379
+    # Supabase (or any external Postgres), taken from DATABASE_URL in .env
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    # Upstash (or any external Redis), taken from REDIS_URL in .env
+    REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (openssl rand -hex 32)}
     PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
     CORS_ORIGIN: ${PUBLIC_APP_URL:-http://localhost:8080}
@@ -19,12 +21,13 @@ x-server: &server
     MAIL_FROM: ${MAIL_FROM:-Pingwell <alerts@pingwell.local>}
     HEARTBEAT_URL: ${HEARTBEAT_URL:-}
     METRICS_TOKEN: ${METRICS_TOKEN:-}
-  depends_on:
-    postgres: { condition: service_healthy }
-    redis: { condition: service_healthy }
 
 services:
+  # Bundled Postgres, off by default now that the app uses Supabase. To use it again, set
+  # DATABASE_URL=postgres://pingwell:pingwell@postgres:5432/pingwell in .env and run
+  #   docker compose --profile local-db up -d
   postgres:
+    profiles: [local-db]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -37,7 +40,10 @@ services:
       interval: 5s
       retries: 10
 
+  # Bundled Redis, off by default now that the app uses Upstash. To use it again, set
+  # REDIS_URL=redis://redis:6379 in .env and run  docker compose --profile local-redis up -d
   redis:
+    profiles: [local-redis]
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
@@ -58,15 +64,14 @@ services:
     command: ["node", "server/dist/api/main.js"]
     depends_on:
       migrate: { condition: service_completed_successfully }
-      redis: { condition: service_healthy }
 
   worker:
     <<: *server
     command: ["node", "server/dist/worker/main.js"]
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://pingwell:${POSTGRES_PASSWORD:-pingwell}@postgres:5432/pingwell
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
       ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
@@ -80,7 +85,6 @@ services:
     stop_grace_period: 35s
     depends_on:
       migrate: { condition: service_completed_successfully }
-      redis: { condition: service_healthy }
 
   web:
     build: { context: ., dockerfile: web/Dockerfile }
