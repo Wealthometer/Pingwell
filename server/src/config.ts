@@ -38,6 +38,11 @@ const schema = z.object({
     .enum(["true", "false", "1", "0"])
     .default("true")
     .transform((v) => v === "true" || v === "1"),
+  /**
+   * Keep rate-limit counters in Redis so they're shared across API replicas. Off by default: it costs
+   * a Redis command per request, which adds up on per-command-billed Redis like Upstash.
+   */
+  RATE_LIMIT_REDIS: bool,
   /** Set to false to stop new sign-ups (e.g. after creating your own account). */
   ALLOW_REGISTRATION: z
     .enum(["true", "false", "1", "0"])

@@ -3,7 +3,9 @@ import { randomBytes } from "node:crypto"
 import { KEY, redis } from "../redis.js"
 
 export const WORKER_ID = `${hostname()}-${process.pid}-${randomBytes(3).toString("hex")}`
-const TTL_SECONDS = 30
+export const HEARTBEAT_INTERVAL_MS = 30_000
+/** Survives two missed beats before the worker drops off the health page. */
+const TTL_SECONDS = 90
 
 export type WorkerBeat = { id: string; startedAt: string; beatAt: string; checksProcessed: number; alertsProcessed: number }
 

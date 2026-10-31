@@ -125,6 +125,7 @@ npm run seed:demo -w server     # sign in as demo@pingwell.dev / pingwell-demo, 
 | `HEARTBEAT_URL` | unset | Pinged every minute, e.g. a healthchecks.io URL, so you hear about it if Pingwell itself stops |
 | `METRICS_TOKEN` | unset | If set, `/metrics` requires `Authorization: Bearer <token>` |
 | `RATE_LIMIT` | `true` | 300 requests/min per IP, 10/min on login and sign-up |
+| `RATE_LIMIT_REDIS` | `false` | Share rate-limit counters across API replicas via Redis (costs one Redis command per request) |
 
 ## Webhook payloads
 

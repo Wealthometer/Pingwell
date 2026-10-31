@@ -48,7 +48,8 @@ export async function buildApp() {
     await app.register(rateLimit, {
       max: 300,
       timeWindow: "1 minute",
-      redis: redis(), // counters shared across API replicas
+      // In-memory per process unless RATE_LIMIT_REDIS is set (needed only with several API replicas).
+      ...(cfg.RATE_LIMIT_REDIS ? { redis: redis() } : {}),
       nameSpace: "pingwell:ratelimit:",
       allowList: (req) => req.url === "/health" || req.url === "/health/ready",
     })

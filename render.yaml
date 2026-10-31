@@ -60,5 +60,8 @@ envVarGroups:
         value: "true"
       - key: ALLOW_PRIVATE_TARGETS
         value: "false"
+      # In-memory rate limiting is enough for one API instance and saves a Redis command per request.
+      - key: RATE_LIMIT_REDIS
+        value: "false"
       - key: ALLOW_REGISTRATION
         value: "true" # set to false once you've created your account

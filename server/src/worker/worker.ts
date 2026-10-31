@@ -9,8 +9,17 @@ import { runMonitorCheck } from "../monitoring/run-monitor-check.js"
 import { schedulerLagSeconds, schedulerTick } from "../monitoring/scheduler.js"
 import { createRedis, tryLock } from "../redis.js"
 import { enqueueDeliveries, QUEUE, type AlertJob, type CheckJob } from "../queues.js"
-import { beat, clearBeat, recordSchedulerTick, WORKER_ID } from "../system/heartbeat.js"
+import { beat, clearBeat, HEARTBEAT_INTERVAL_MS, recordSchedulerTick, WORKER_ID } from "../system/heartbeat.js"
 import { alertsTotal, registry, scheduledTotal, schedulerLag } from "../system/metrics.js"
+
+/**
+ * Hosted Redis (Upstash) bills per command, and an idle BullMQ worker is not free: it re-issues its
+ * blocking wait every `drainDelay` seconds and runs a stalled-job sweep every `stalledInterval`.
+ * New jobs still wake the blocking wait immediately, so longer values cost no check latency.
+ */
+const WORKER_POLLING = { drainDelay: 30, stalledInterval: 120_000 }
+const QUOTA_BACKOFF_MS = 5 * 60_000
+const TICK_WRITE_MS = 30_000
 
 export type RunningWorker = {
   /** Stops loops and drains in-flight jobs. Shared DB/Redis/queue connections are left to the caller. */
@@ -29,6 +38,24 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
   const timers: NodeJS.Timeout[] = []
   let stopping = false
 
+  // When the Redis provider rejects commands for quota reasons (e.g. Upstash "max requests limit"),
+  // BullMQ retries its fetch loop immediately, which floods the logs and keeps hammering Redis.
+  // Pause everything locally and try again later instead.
+  let quotaPausedUntil = 0
+  let resumeTimer: NodeJS.Timeout | undefined
+  const isQuotaError = (msg: string) => /max (daily )?requests? limit|limit exceeded/i.test(msg)
+  function backOffForQuota(msg: string) {
+    if (stopping || Date.now() < quotaPausedUntil) return
+    quotaPausedUntil = Date.now() + QUOTA_BACKOFF_MS
+    log.error({ err: msg, retryInSeconds: QUOTA_BACKOFF_MS / 1000 }, "redis quota exceeded: pausing worker")
+    for (const w of [checkWorker, alertWorker]) void w.pause(true).catch(() => {})
+    resumeTimer = setTimeout(() => {
+      if (stopping) return
+      log.info("resuming worker after redis quota backoff")
+      for (const w of [checkWorker, alertWorker]) w.resume()
+    }, QUOTA_BACKOFF_MS)
+  }
+
   // ── Consumers ──────────────────────────────────────────────────────────────
 
   const checkWorker = new Worker<CheckJob>(
@@ -42,7 +69,7 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
       }
       return { status: result.status, action: result.action }
     },
-    { connection: createRedis(), concurrency: cfg.CHECK_CONCURRENCY },
+    { connection: createRedis(), concurrency: cfg.CHECK_CONCURRENCY, ...WORKER_POLLING },
   )
 
   const alertWorker = new Worker<AlertJob>(
@@ -53,7 +80,7 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
       alertsTotal.inc({ outcome })
       return outcome
     },
-    { connection: createRedis(), concurrency: 10 },
+    { connection: createRedis(), concurrency: 10, ...WORKER_POLLING },
   )
 
   alertWorker.on("failed", async (job, err) => {
@@ -64,19 +91,26 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
     if (job.attemptsMade >= attempts) await markDeliveryFailed(job.data.deliveryId, err.message).catch((e) => log.error(e))
   })
   checkWorker.on("failed", (job, err) => log.error({ monitorId: job?.data.monitorId, err: err.message }, "check job failed"))
-  for (const w of [checkWorker, alertWorker]) w.on("error", (err) => log.error({ err: err.message }, "worker error"))
+  for (const w of [checkWorker, alertWorker])
+    w.on("error", (err) => {
+      if (isQuotaError(err.message)) return backOffForQuota(err.message)
+      if (Date.now() < quotaPausedUntil) return // errors from jobs that were in flight when we paused
+      log.error({ err: err.message }, "worker error")
+    })
 
   // ── Loops ──────────────────────────────────────────────────────────────────
 
   function every(ms: number, name: string, fn: () => Promise<void>) {
     let running = false
     const run = async () => {
-      if (running || stopping) return
+      if (running || stopping || Date.now() < quotaPausedUntil) return
       running = true
       try {
         await fn()
       } catch (err) {
-        log.error({ err: (err as Error).message, loop: name }, "loop failed")
+        const msg = (err as Error).message
+        if (isQuotaError(msg)) backOffForQuota(msg)
+        else log.error({ err: msg, loop: name }, "loop failed")
       } finally {
         running = false
       }
@@ -85,15 +119,20 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
     void run()
   }
 
+  let lastTickWrite = 0
   // Scheduler: safe to run in every worker thanks to SKIP LOCKED.
   every(cfg.SCHEDULER_INTERVAL_MS, "scheduler", async () => {
     const n = await schedulerTick(cfg.SCHEDULER_BATCH_SIZE)
     if (n) scheduledTotal.inc(n)
     schedulerLag.set(await schedulerLagSeconds())
-    await recordSchedulerTick()
+    // The tick only feeds the health check (stale after 60s), so don't write it on every 5s pass.
+    if (Date.now() - lastTickWrite >= TICK_WRITE_MS) {
+      await recordSchedulerTick()
+      lastTickWrite = Date.now()
+    }
   })
 
-  every(10_000, "heartbeat", () => beat({ startedAt, ...stats }))
+  every(HEARTBEAT_INTERVAL_MS, "heartbeat", () => beat({ startedAt, ...stats }))
 
   // Outbox sweeper: re-queue alert deliveries that were committed but never enqueued (e.g. crash).
   every(60_000, "outbox", async () => {
@@ -155,6 +194,7 @@ export function startWorker(opts: { metricsPort?: number } = {}): RunningWorker 
       stopping = true
       log.info("worker stopping: finishing in-flight jobs")
       timers.forEach(clearInterval)
+      clearTimeout(resumeTimer)
       await Promise.allSettled([checkWorker.close(), alertWorker.close()])
       await clearBeat().catch(() => {})
       metricsServer?.close()
